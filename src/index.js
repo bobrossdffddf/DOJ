@@ -7,7 +7,11 @@ import {
   Client,
   ContainerBuilder,
   Events,
+  FileUploadBuilder,
   GatewayIntentBits,
+  LabelBuilder,
+  MediaGalleryBuilder,
+  MediaGalleryItemBuilder,
   MessageFlags,
   ModalBuilder,
   PermissionFlagsBits,
@@ -72,12 +76,174 @@ const client = new Client({
 const pendingDrafts = new Map();
 const pendingJudged = new Map();
 
+function buildWarrantRequestModal() {
+  const modal = new ModalBuilder()
+    .setCustomId('warrant:request')
+    .setTitle('Warrant Request Form');
+
+  const typeInput = new TextInputBuilder()
+    .setCustomId('warrant_type')
+    .setLabel('Warrant Type')
+    .setPlaceholder('Arrest or Search')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setMaxLength(10);
+
+  const suspectInput = new TextInputBuilder()
+    .setCustomId('suspect_id')
+    .setLabel('Suspect User ID (optional)')
+    .setPlaceholder('Paste their Discord user ID, or leave blank')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(false)
+    .setMaxLength(25);
+
+  const crimeInput = new TextInputBuilder()
+    .setCustomId('crime')
+    .setLabel('Suspected Crime')
+    .setPlaceholder('Describe the crime the suspect is accused of')
+    .setStyle(TextInputStyle.Paragraph)
+    .setRequired(true)
+    .setMaxLength(1024);
+
+  const causeInput = new TextInputBuilder()
+    .setCustomId('cause')
+    .setLabel('Probable Cause')
+    .setPlaceholder('Describe the evidence or reasoning supporting this warrant')
+    .setStyle(TextInputStyle.Paragraph)
+    .setRequired(true)
+    .setMaxLength(1024);
+
+  const photoFileUpload = new LabelBuilder()
+    .setLabel('Suspect Photo')
+    .setDescription('Upload a photo or image of the suspect.')
+    .setFileUploadComponent(
+      new FileUploadBuilder()
+        .setCustomId('suspect_photo')
+        .setRequired(true),
+    );
+
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(typeInput),
+    new ActionRowBuilder().addComponents(suspectInput),
+    new ActionRowBuilder().addComponents(crimeInput),
+    new ActionRowBuilder().addComponents(causeInput),
+  );
+
+  modal.addLabelComponents(photoFileUpload);
+
+  return modal;
+}
+
+function buildJudgeContainer(draft, requesterId, timestamp) {
+  const suspectDisplay = draft.suspectUserId ? `<@${draft.suspectUserId}>` : '*Not specified*';
+
+  const container = new ContainerBuilder()
+    .setAccentColor(0xf1c40f)
+    .addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `## New Warrant Request\n` +
+        `**Requester:** <@${requesterId}>\n` +
+        `**Type:** ${draft.warrantType}\n` +
+        `**Suspect:** ${suspectDisplay}\n`,
+      ),
+    )
+    .addSeparatorComponents(
+      new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small),
+    )
+    .addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `**Suspected Crime**\n${draft.crime}\n\n` +
+        `**Probable Cause**\n${draft.probableCause}\n\n` +
+        `-# Submitted <t:${timestamp}:R>`,
+      ),
+    );
+
+  if (draft.photoUrl) {
+    container
+      .addSeparatorComponents(
+        new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small),
+      )
+      .addTextDisplayComponents(
+        new TextDisplayBuilder().setContent('**Suspect Photo**'),
+      )
+      .addMediaGalleryComponents(
+        new MediaGalleryBuilder().addItems(
+          new MediaGalleryItemBuilder().setURL(draft.photoUrl),
+        ),
+      );
+  }
+
+  container
+    .addSeparatorComponents(
+      new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small),
+    )
+    .addActionRowComponents(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`warrant:approve:${requesterId}`)
+          .setLabel('Accept')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`warrant:deny:${requesterId}`)
+          .setLabel('Deny')
+          .setStyle(ButtonStyle.Danger),
+      ),
+    );
+
+  return container;
+}
+
+function buildApprovedContainer(draft, requesterId, judgeId, fileLink, docLink, timestamp) {
+  const suspectDisplay = draft.suspectUserId ? `<@${draft.suspectUserId}>` : '*Not specified*';
+
+  const container = new ContainerBuilder()
+    .setAccentColor(0x2ecc71)
+    .addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `## Approved Warrant\n` +
+        `**Requester:** <@${requesterId}>\n` +
+        `**Approved By:** <@${judgeId}>\n` +
+        `**Type:** ${draft.warrantType}\n` +
+        `**Suspect:** ${suspectDisplay}\n`,
+      ),
+    )
+    .addSeparatorComponents(
+      new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small),
+    )
+    .addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `**Suspected Crime**\n${draft.crime}\n\n` +
+        `**Probable Cause**\n${draft.probableCause}\n\n` +
+        `**Supporting File**\n${fileLink || '*None provided*'}\n\n` +
+        `**Google Doc**\n${docLink || '*None provided*'}\n\n` +
+        `-# Approved <t:${timestamp}:R>`,
+      ),
+    );
+
+  if (draft.photoUrl) {
+    container
+      .addSeparatorComponents(
+        new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small),
+      )
+      .addTextDisplayComponents(
+        new TextDisplayBuilder().setContent('**Suspect Photo**'),
+      )
+      .addMediaGalleryComponents(
+        new MediaGalleryBuilder().addItems(
+          new MediaGalleryItemBuilder().setURL(draft.photoUrl),
+        ),
+      );
+  }
+
+  return container;
+}
+
 function postRequestEmbed(guildConfig, guildName) {
   const container = new ContainerBuilder()
     .setAccentColor(0x5865f2)
     .addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
-        `## Warrant Request Form\nUse the button below to submit a warrant request for **${guildName}**.\n\nThe form will ask you for:\n- Warrant type (Arrest or Search)\n- Suspect's user ID *(optional)*\n- Suspected crime\n- Probable cause\n- Suspect photo URL`,
+        `## Warrant Request Form\nUse the button below to submit a warrant request for **${guildName}**.\n\nThe form will ask you for:\n- Warrant type (Arrest or Search)\n- Suspect's user ID *(optional)*\n- Suspected crime\n- Probable cause\n- Suspect photo *(file upload)*`,
       ),
     )
     .addSeparatorComponents(
@@ -135,59 +301,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      const modal = new ModalBuilder()
-        .setCustomId('warrant:request')
-        .setTitle('Warrant Request Form');
-
-      const typeInput = new TextInputBuilder()
-        .setCustomId('warrant_type')
-        .setLabel('Warrant Type')
-        .setPlaceholder('Arrest or Search')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true)
-        .setMaxLength(10);
-
-      const suspectInput = new TextInputBuilder()
-        .setCustomId('suspect_id')
-        .setLabel('Suspect User ID (optional)')
-        .setPlaceholder('Paste their Discord user ID, or leave blank')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(false)
-        .setMaxLength(25);
-
-      const crimeInput = new TextInputBuilder()
-        .setCustomId('crime')
-        .setLabel('Suspected Crime')
-        .setPlaceholder('Describe the crime the suspect is accused of')
-        .setStyle(TextInputStyle.Paragraph)
-        .setRequired(true)
-        .setMaxLength(1024);
-
-      const causeInput = new TextInputBuilder()
-        .setCustomId('cause')
-        .setLabel('Probable Cause')
-        .setPlaceholder('Describe the evidence or reasoning supporting this warrant')
-        .setStyle(TextInputStyle.Paragraph)
-        .setRequired(true)
-        .setMaxLength(1024);
-
-      const photoInput = new TextInputBuilder()
-        .setCustomId('photo')
-        .setLabel('Suspect Photo URL')
-        .setPlaceholder('Paste a direct image URL')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true)
-        .setMaxLength(500);
-
-      modal.addComponents(
-        new ActionRowBuilder().addComponents(typeInput),
-        new ActionRowBuilder().addComponents(suspectInput),
-        new ActionRowBuilder().addComponents(crimeInput),
-        new ActionRowBuilder().addComponents(causeInput),
-        new ActionRowBuilder().addComponents(photoInput),
-      );
-
-      await interaction.showModal(modal);
+      await interaction.showModal(buildWarrantRequestModal());
       return;
     }
 
@@ -207,7 +321,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const suspectUserId = suspectRaw.length > 0 ? suspectRaw : null;
       const crime = interaction.fields.getTextInputValue('crime');
       const probableCause = interaction.fields.getTextInputValue('cause');
-      const photoInfo = interaction.fields.getTextInputValue('photo');
+
+      const uploadedFiles = interaction.fields.getUploadedFiles('suspect_photo', true);
+      const photoAttachment = uploadedFiles?.first();
+      const photoUrl = photoAttachment?.proxyURL ?? photoAttachment?.url ?? null;
 
       const cfg = getGuildConfig(interaction.guildId);
       if (!cfg) {
@@ -221,58 +338,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      const suspectDisplay = suspectUserId ? `<@${suspectUserId}>` : '*Not specified*';
-      const timestamp = Math.floor(Date.now() / 1000);
-
-      const container = new ContainerBuilder()
-        .setAccentColor(0xf1c40f)
-        .addTextDisplayComponents(
-          new TextDisplayBuilder().setContent(
-            `## New Warrant Request\n` +
-            `**Requester:** <@${interaction.user.id}>\n` +
-            `**Type:** ${warrantType}\n` +
-            `**Suspect:** ${suspectDisplay}\n`,
-          ),
-        )
-        .addSeparatorComponents(
-          new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small),
-        )
-        .addTextDisplayComponents(
-          new TextDisplayBuilder().setContent(
-            `**Suspected Crime**\n${crime}\n\n` +
-            `**Probable Cause**\n${probableCause}\n\n` +
-            `**Suspect Photo**\n${photoInfo}\n\n` +
-            `-# Submitted <t:${timestamp}:R>`,
-          ),
-        )
-        .addSeparatorComponents(
-          new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small),
-        )
-        .addActionRowComponents(
-          new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setCustomId(`warrant:approve:${interaction.user.id}`)
-              .setLabel('Accept')
-              .setStyle(ButtonStyle.Success),
-            new ButtonBuilder()
-              .setCustomId(`warrant:deny:${interaction.user.id}`)
-              .setLabel('Deny')
-              .setStyle(ButtonStyle.Danger),
-          ),
-        );
-
-      pendingDrafts.set(interaction.user.id, {
+      const draft = {
         guildId: interaction.guildId,
         requesterId: interaction.user.id,
         warrantType,
         suspectUserId,
         crime,
         probableCause,
-        photoInfo,
-      });
+        photoUrl,
+      };
+
+      pendingDrafts.set(interaction.user.id, draft);
+
+      const timestamp = Math.floor(Date.now() / 1000);
+      const judgeContainer = buildJudgeContainer(draft, interaction.user.id, timestamp);
 
       await judgeChannel.send({
-        components: [container],
+        components: [judgeContainer],
         flags: MessageFlags.IsComponentsV2,
       });
 
@@ -361,33 +443,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       const fileLink = interaction.fields.getTextInputValue('file_link').trim();
       const docLink = interaction.fields.getTextInputValue('doc_link').trim();
-      const suspectDisplay = draft.suspectUserId ? `<@${draft.suspectUserId}>` : '*Not specified*';
       const timestamp = Math.floor(Date.now() / 1000);
 
-      const approvedContainer = new ContainerBuilder()
-        .setAccentColor(0x2ecc71)
-        .addTextDisplayComponents(
-          new TextDisplayBuilder().setContent(
-            `## Approved Warrant\n` +
-            `**Requester:** <@${requesterId}>\n` +
-            `**Approved By:** <@${interaction.user.id}>\n` +
-            `**Type:** ${draft.warrantType}\n` +
-            `**Suspect:** ${suspectDisplay}\n`,
-          ),
-        )
-        .addSeparatorComponents(
-          new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small),
-        )
-        .addTextDisplayComponents(
-          new TextDisplayBuilder().setContent(
-            `**Suspected Crime**\n${draft.crime}\n\n` +
-            `**Probable Cause**\n${draft.probableCause}\n\n` +
-            `**Suspect Photo**\n${draft.photoInfo}\n\n` +
-            `**Supporting File**\n${fileLink || '*None provided*'}\n\n` +
-            `**Google Doc**\n${docLink || '*None provided*'}\n\n` +
-            `-# Approved <t:${timestamp}:R>`,
-          ),
-        );
+      const approvedContainer = buildApprovedContainer(
+        draft,
+        requesterId,
+        interaction.user.id,
+        fileLink,
+        docLink,
+        timestamp,
+      );
 
       await activeChannel.send({
         content: `<@${requesterId}> your warrant has been approved.`,
