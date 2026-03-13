@@ -20,9 +20,11 @@ import {
   SeparatorBuilder,
   SeparatorSpacingSize,
   SlashCommandBuilder,
+  StringSelectMenuBuilder,
   TextDisplayBuilder,
   TextInputBuilder,
   TextInputStyle,
+  UserSelectMenuBuilder,
 } from 'discord.js';
 import { getGuildConfig, setGuildConfig } from './configStore.js';
 
@@ -81,21 +83,29 @@ function buildWarrantRequestModal() {
     .setCustomId('warrant:request')
     .setTitle('Warrant Request Form');
 
-  const typeInput = new TextInputBuilder()
-    .setCustomId('warrant_type')
+  const typeSelectLabel = new LabelBuilder()
     .setLabel('Warrant Type')
-    .setPlaceholder('Arrest or Search')
-    .setStyle(TextInputStyle.Short)
-    .setRequired(true)
-    .setMaxLength(10);
+    .setDescription('Select the type of warrant you are requesting.')
+    .setStringSelectMenuComponent(
+      new StringSelectMenuBuilder()
+        .setCustomId('warrant_type')
+        .setPlaceholder('Select warrant type...')
+        .addOptions([
+          { label: 'Arrest', value: 'Arrest', description: 'Warrant for the arrest of a suspect' },
+          { label: 'Search', value: 'Search', description: 'Warrant to search a location or person' },
+        ]),
+    );
 
-  const suspectInput = new TextInputBuilder()
-    .setCustomId('suspect_id')
-    .setLabel('Suspect User ID (optional)')
-    .setPlaceholder('Paste their Discord user ID, or leave blank')
-    .setStyle(TextInputStyle.Short)
-    .setRequired(false)
-    .setMaxLength(25);
+  const suspectSelectLabel = new LabelBuilder()
+    .setLabel('Suspect')
+    .setDescription('Select the suspect user (optional — leave blank if not in server).')
+    .setUserSelectMenuComponent(
+      new UserSelectMenuBuilder()
+        .setCustomId('suspect_user')
+        .setPlaceholder('Select suspect...')
+        .setMinValues(0)
+        .setMaxValues(1),
+    );
 
   const crimeInput = new TextInputBuilder()
     .setCustomId('crime')
@@ -122,14 +132,13 @@ function buildWarrantRequestModal() {
         .setRequired(true),
     );
 
-  modal.addComponents(
-    new ActionRowBuilder().addComponents(typeInput),
-    new ActionRowBuilder().addComponents(suspectInput),
-    new ActionRowBuilder().addComponents(crimeInput),
-    new ActionRowBuilder().addComponents(causeInput),
-  );
-
-  modal.addLabelComponents(photoFileUpload);
+  modal
+    .addLabelComponents(typeSelectLabel, suspectSelectLabel)
+    .addComponents(
+      new ActionRowBuilder().addComponents(crimeInput),
+      new ActionRowBuilder().addComponents(causeInput),
+    )
+    .addLabelComponents(photoFileUpload);
 
   return modal;
 }
@@ -243,7 +252,7 @@ function postRequestEmbed(guildConfig, guildName) {
     .setAccentColor(0x5865f2)
     .addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
-        `## Warrant Request Form\nUse the button below to submit a warrant request for **${guildName}**.\n\nThe form will ask you for:\n- Warrant type (Arrest or Search)\n- Suspect's user ID *(optional)*\n- Suspected crime\n- Probable cause\n- Suspect photo *(file upload)*`,
+        `## Warrant Request Form\nUse the button below to submit a warrant request for **${guildName}**.\n\nThe form will ask you for:\n- Warrant type *(dropdown: Arrest or Search)*\n- Suspect user *(user select, optional)*\n- Suspected crime\n- Probable cause\n- Suspect photo *(file upload)*`,
       ),
     )
     .addSeparatorComponents(
@@ -306,19 +315,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (interaction.isModalSubmit() && interaction.customId === 'warrant:request') {
-      const rawType = interaction.fields.getTextInputValue('warrant_type').trim();
-      const warrantType = rawType.charAt(0).toUpperCase() + rawType.slice(1).toLowerCase();
+      const warrantTypeValues = interaction.fields.getStringSelectValues('warrant_type');
+      const warrantType = warrantTypeValues[0];
 
-      if (warrantType !== 'Arrest' && warrantType !== 'Search') {
-        await interaction.reply({
-          content: 'Invalid warrant type. Please enter either **Arrest** or **Search**.',
-          ephemeral: true,
-        });
-        return;
-      }
+      const selectedUsers = interaction.fields.getSelectedUsers('suspect_user');
+      const suspectUser = selectedUsers?.first() ?? null;
+      const suspectUserId = suspectUser?.id ?? null;
 
-      const suspectRaw = interaction.fields.getTextInputValue('suspect_id').trim();
-      const suspectUserId = suspectRaw.length > 0 ? suspectRaw : null;
       const crime = interaction.fields.getTextInputValue('crime');
       const probableCause = interaction.fields.getTextInputValue('cause');
 
